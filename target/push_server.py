@@ -93,13 +93,24 @@ async def handler(ws, path=None, *, mode: str = "naive", queue_size: int = 200):
 
 
 async def broadcaster(mode: str, interval: float, work_ms: float, pad_bytes: int = 0):
+    """一轮广播。
+
+    naive：每个订阅者都要单独走一遍「转换 → 序列化 → 发送」。真实系统里很常见
+           （每个客户端下发不同的字段裁剪、不同的精度），代价是 O(N)。
+    optimized：一份字节广播给所有人，O(1) 序列化 + O(N) 入队。
+
+    work_ms 用来模拟「每个订阅者单独转换」的固定开销。
+    """
     seq = 0
     while True:
         seq += 1
+        started = time.perf_counter()
         payload = build_payload(seq, pad_bytes)
 
         if mode == "naive":
             for client in list(CLIENTS.values()):
+                if work_ms:
+                    await asyncio.sleep(work_ms / 1000)
                 try:
                     await client.ws.send(payload)
                     COUNTER["sent"] += 1
@@ -109,9 +120,8 @@ async def broadcaster(mode: str, interval: float, work_ms: float, pad_bytes: int
             for client in list(CLIENTS.values()):
                 client.offer(payload)
 
-        if work_ms:
-            await asyncio.sleep(work_ms / 1000)
-        await asyncio.sleep(interval)
+        spent = time.perf_counter() - started
+        await asyncio.sleep(max(0.0, interval - spent))
 
 
 async def stats_writer(path: Path, interval: float = 1.0):
@@ -151,7 +161,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--mode", choices=["naive", "optimized"], default="naive")
     parser.add_argument("--interval", type=float, default=0.2, help="广播间隔（秒）")
-    parser.add_argument("--work-ms", type=float, default=0.0, help="每帧额外占用（毫秒），模拟编码开销")
+    parser.add_argument("--work-ms", type=float, default=0.0, help="每个订阅者的转换开销（毫秒），模拟逐客户端处理")
     parser.add_argument("--queue-size", type=int, default=200, help="optimized 模式每连接队列长度")
     parser.add_argument("--payload-bytes", type=int, default=0, help="报文填充字节数，用于放大慢消费者的影响")
     parser.add_argument("--stats", default="report/server-stats.jsonl")
