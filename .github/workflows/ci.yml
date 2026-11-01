@@ -27,16 +27,16 @@ jobs:
       - name: Load smoke test (naive vs optimized)
         run: |
           mkdir -p report
-          python target/push_server.py --port 8765 --mode naive --interval 0.1 \
+          python target/push_server.py --port 8765 --mode naive --interval 0.05 --payload-bytes 8192 \
             --stats report/server-stats-naive.jsonl &
           sleep 3
-          loadlab run --target ws://127.0.0.1:8765 --stages 5,20,40 --duration 4 \
+          loadlab run --target ws://127.0.0.1:8765 --stages 10,20 --stalled 1 --duration 6 \
             --server-stats report/server-stats-naive.jsonl --out report/naive.json
 
-          python target/push_server.py --port 8766 --mode optimized --interval 0.1 \
+          python target/push_server.py --port 8766 --mode optimized --interval 0.05 --payload-bytes 8192 \
             --stats report/server-stats-opt.jsonl &
           sleep 3
-          loadlab run --target ws://127.0.0.1:8766 --stages 5,20,40 --duration 4 \
+          loadlab run --target ws://127.0.0.1:8766 --stages 10,20 --stalled 1 --duration 6 \
             --server-stats report/server-stats-opt.jsonl --out report/optimized.json
 
           loadlab report --inputs report/naive.json report/optimized.json \

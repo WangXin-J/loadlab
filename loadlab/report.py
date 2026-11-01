@@ -52,10 +52,10 @@ def chart_throughput(runs: list[tuple[str, dict]], out: Path) -> None:
 
 
 def _table(stages: list[dict]) -> str:
-    head = "| 并发 | 吞吐(msg/s) | p50(ms) | p95(ms) | p99(ms) | 错误 | 丢帧 | 事件循环最大延迟 |\n"
-    head += "|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+    head = "| 并发 | 停滞 | 吞吐(msg/s) | p50(ms) | p95(ms) | p99(ms) | 错误 | 丢帧 | 事件循环最大延迟 |\n"
+    head += "|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
     rows = [
-        f"| {s['clients']} | {s['throughput']} | {s['p50']} | {s['p95']} | {s['p99']} | "
+        f"| {s['clients']} | {s.get('stalled', 0)} | {s['throughput']} | {s['p50']} | {s['p95']} | {s['p99']} | "
         f"{s['errors']} | {s['dropped']} | {s['loopLagMs']}ms |"
         for s in stages
     ]

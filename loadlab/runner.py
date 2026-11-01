@@ -40,12 +40,28 @@ def _slice(rows: list[dict], start_ms: int, end_ms: int) -> tuple[int, int, floa
     )
 
 
-async def run_stage(url: str, clients: int, duration: float, server_rows: list[dict] | None = None) -> dict:
+async def run_stage(
+    url: str,
+    clients: int,
+    duration: float,
+    server_rows: list[dict] | None = None,
+    stalled: int = 0,
+) -> dict:
+    """一个并发档位。
+
+    stalled > 0 时，其中 stalled 个连接会连上但不读 —— 这是真实世界里
+    「手机进电梯」「消费端 GC 停顿」的等价物。
+    """
+    if stalled > clients:
+        raise ValueError("stalled 不能大于 clients")
+
     start_ms = int(time.time() * 1000)
     started = time.perf_counter()
 
+    normal = max(0, clients - stalled)
     outcomes = await asyncio.gather(
-        *(run_client(url, duration) for _ in range(clients)),
+        *(run_client(url, duration) for _ in range(normal)),
+        *(run_client(url, duration, stall=True) for _ in range(stalled)),
         return_exceptions=True,
     )
 
@@ -58,13 +74,15 @@ async def run_stage(url: str, clients: int, duration: float, server_rows: list[d
         if isinstance(outcome, BaseException):
             errors += 1
             continue
+        if outcome.stalled:
+            continue
         latencies.extend(outcome.latencies)
         messages += outcome.messages
         errors += outcome.errors
 
     _, drops, loop_lag = _slice(server_rows or [], start_ms, end_ms)
 
-    return summarize(
+    stage = summarize(
         clients=clients,
         latencies=latencies,
         messages=messages,
@@ -73,6 +91,9 @@ async def run_stage(url: str, clients: int, duration: float, server_rows: list[d
         drops=drops,
         loop_lag_ms=loop_lag,
     )
+    stage["stalled"] = stalled
+    stage["normalClients"] = normal
+    return stage
 
 
 async def run_stages(
@@ -81,12 +102,13 @@ async def run_stages(
     duration: float,
     server_stats: str | Path | None = None,
     cooldown: float = 1.0,
+    stalled: int = 0,
 ) -> dict:
     rows = read_server_stats(server_stats)
     results = []
     for index, clients in enumerate(stages, start=1):
-        print(f"[stage {index}/{len(stages)}] {clients} 并发，持续 {duration}s", flush=True)
-        stage = await run_stage(url, clients, duration, rows)
+        print(f"[stage {index}/{len(stages)}] {clients} 并发（其中 {stalled} 个停滞），持续 {duration}s", flush=True)
+        stage = await run_stage(url, clients, duration, rows, stalled=stalled)
         print(
             f"   messages={stage['messages']} throughput={stage['throughput']}/s "
             f"p95={stage['p95']}ms errors={stage['errors']} drops={stage['dropped']}",
@@ -100,6 +122,7 @@ async def run_stages(
         "target": url,
         "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "durationPerStage": duration,
+        "stalled": stalled,
         "stages": results,
         "knee": find_knee(results),
     }

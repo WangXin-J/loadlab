@@ -28,22 +28,23 @@ CLIENTS: dict = {}
 COUNTER = {"sent": 0, "dropped": 0}
 
 
-def build_payload(seq: int) -> str:
-    return json.dumps(
-        {
-            "type": "metric",
-            "seq": seq,
-            "sentAt": int(time.time() * 1000),
-            "hostId": "h1",
-            "metrics": {
-                "cpu": round(10 + (seq % 50) * 0.7, 1),
-                "mem": 63.2,
-                "disk": 71.0,
-                "net": 1.2,
-            },
+def build_payload(seq: int, pad_bytes: int = 0) -> str:
+    payload = {
+        "type": "metric",
+        "seq": seq,
+        "sentAt": int(time.time() * 1000),
+        "hostId": "h1",
+        "metrics": {
+            "cpu": round(10 + (seq % 50) * 0.7, 1),
+            "mem": 63.2,
+            "disk": 71.0,
+            "net": 1.2,
         },
-        ensure_ascii=False,
-    )
+    }
+    if pad_bytes:
+        # 用大报文尽快填满慢消费者的 socket 缓冲区，把「卡住」在几秒内复现出来
+        payload["pad"] = "x" * pad_bytes
+    return json.dumps(payload, ensure_ascii=False)
 
 
 class Client:
@@ -91,11 +92,11 @@ async def handler(ws, path=None, *, mode: str = "naive", queue_size: int = 200):
             client.consumer.cancel()
 
 
-async def broadcaster(mode: str, interval: float, work_ms: float):
+async def broadcaster(mode: str, interval: float, work_ms: float, pad_bytes: int = 0):
     seq = 0
     while True:
         seq += 1
-        payload = build_payload(seq)
+        payload = build_payload(seq, pad_bytes)
 
         if mode == "naive":
             for client in list(CLIENTS.values()):
@@ -140,7 +141,7 @@ async def main_async(args) -> None:
     async with websockets.serve(handler_with_mode, "127.0.0.1", args.port):
         print(f"push server on ws://127.0.0.1:{args.port} mode={args.mode}", flush=True)
         await asyncio.gather(
-            broadcaster(args.mode, args.interval, args.work_ms),
+            broadcaster(args.mode, args.interval, args.work_ms, args.payload_bytes),
             stats_writer(stats_path),
         )
 
@@ -152,6 +153,7 @@ def main() -> None:
     parser.add_argument("--interval", type=float, default=0.2, help="广播间隔（秒）")
     parser.add_argument("--work-ms", type=float, default=0.0, help="每帧额外占用（毫秒），模拟编码开销")
     parser.add_argument("--queue-size", type=int, default=200, help="optimized 模式每连接队列长度")
+    parser.add_argument("--payload-bytes", type=int, default=0, help="报文填充字节数，用于放大慢消费者的影响")
     parser.add_argument("--stats", default="report/server-stats.jsonl")
     args = parser.parse_args()
     try:

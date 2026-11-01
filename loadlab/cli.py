@@ -32,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--duration", type=float, default=8.0, help="每档持续秒数")
     run.add_argument("--cooldown", type=float, default=1.0, help="档位之间冷却秒数")
     run.add_argument("--server-stats", default=None, help="服务端 stats.jsonl 路径（可选）")
+    run.add_argument("--stalled", type=int, default=0, help="其中多少个连接连上后不读取（模拟慢消费者）")
     run.add_argument("--out", default="report/results.json")
 
     rep = sub.add_parser("report", help="根据结果 JSON 生成图表与 Markdown")
@@ -44,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         stages = _parse_stages(args.stages)
         data = asyncio.run(
-            run_stages(args.target, stages, args.duration, args.server_stats, args.cooldown)
+            run_stages(args.target, stages, args.duration, args.server_stats, args.cooldown, args.stalled)
         )
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
